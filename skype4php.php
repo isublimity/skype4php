@@ -14,13 +14,37 @@ class skype4php
     private $registrationToken;
     private $username;
     private $password;
+    private $endpointId;
     private $skypeToken;
     public function __construct($user,$password)
     {
         $this->username=$user;
         $this->password=$password;
     }
-    public static function page_curl($url,$fields_post=array()) {
+    private static function get_headers_from_curl_response($response)
+    {
+        $headers = array();
+
+//        $header_text = substr($response, 0, strpos($response, "\r\n\r\n"));
+        $header_text = $response;
+
+        foreach (explode("\r\n", $header_text) as $i => $line)
+            if ($i === 0)
+                $headers['http_code'] = $line;
+            else
+            {
+                $r= explode(': ', $line);
+
+//                list ($key, $value) =$r;
+                if (sizeof($r)==2)
+                    $headers[$r[0]] = $r[1];
+            }
+
+        return $headers;
+    }
+
+
+    public static function page_curl($url,$fields_post=array(),$headers=array()) {
         // Guzzle ?
 
 
@@ -36,11 +60,22 @@ class skype4php
         {
             curl_setopt( $ch,CURLOPT_POST, 1);
             curl_setopt( $ch,CURLOPT_POSTFIELDS, http_build_query($fields_post));
+            print_r($fields_post);
 
         }
+
+
         curl_setopt( $ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt( $ch, CURLOPT_FOLLOWLOCATION, true );
         curl_setopt( $ch, CURLOPT_HEADER, false);
+
+
+        if ($headers)
+        {
+            curl_setopt( $ch, CURLOPT_HTTPHEADER, $headers);
+        }
+
+
         curl_setopt( $ch, CURLOPT_MAXREDIRS, 10);
 
         // don't take more than 5 seconds connecting and 10 seconds for a response
@@ -66,7 +101,7 @@ class skype4php
         $end=microtime(true)-$m;
         $info=curl_getinfo($ch);
         $error=curl_error($ch);
-        return array($header,$body,$info,$error,$end);
+        return array(self::get_headers_from_curl_response($header),$body,$info,$error,$end);
     }
     private  function randomUUID() {
         // php.net copypaste
@@ -79,73 +114,27 @@ class skype4php
         );
     }
 
+    public function ping()  {
+        $d=$this->page_curl(self::$PING_URL,array(
+            "sessionId"=>$this->randomUUID(),
+        ),
+            array('X-Skypetoken:'.$this->skypeToken)
+            );
+
+        return $d[0]['http_code'];
+
+
+    }
     public function login()  {
-        $guid = $this->randomUUID();
-        $tCookies=array();
-        $loginResponse = $this->postToLogin($this->username, $this->password);
 
-        //Elements inputs = loginResponseDocument.select("input[name=skypetoken]");
-
-
-
-
-
-//        final Map<String, String> tCookies = new HashMap<>();
-//        final Response loginResponse = postToLogin(username, password);
-//        tCookies.putAll(loginResponse.cookies());
-//        Document loginResponseDocument;
-//        try {
-//            loginResponseDocument = loginResponse.parse();
-//        } catch (IOException e) {
-//            throw new ParseException("While parsing the login response", e);
-//        }
-//        Elements inputs = loginResponseDocument.select("input[name=skypetoken]");
-//        if (inputs.size() > 0) {
-//            String tSkypeToken = inputs.get(0).attr("value");
-//
-//            Response asmResponse = getAsmToken(tCookies, tSkypeToken);
-//            tCookies.putAll(asmResponse.cookies());
-//
-//            HttpsURLConnection registrationToken = registerEndpoint(tSkypeToken);
-//            String[] splits = registrationToken.getHeaderField("Set-RegistrationToken").split(";");
-//            String tRegistrationToken = splits[0];
-//            String tEndpointId = splits[2].split("=")[1];
-//
-//            this.skypeToken = tSkypeToken;
-//            this.registrationToken = tRegistrationToken;
-//            this.endpointId = tEndpointId;
-//            this.cookies = tCookies;
-//
-//            sessionKeepaliveThread = new Thread(String.format("Skype-%s-Session", username)) {
-//                public void run() {
-//                    while (loggedIn.get()) {
-//                        try {
-//                            Jsoup.connect(PING_URL).header("X-Skypetoken", skypeToken).cookies(cookies).data("sessionId", guid.toString()).post();
-//                        } catch (IOException e) {
-//                            eventDispatcher.callEvent(new DisconnectedEvent(e));
-//                        }
-//                        try {
-//                            Thread.sleep(300000);
-//                        } catch (InterruptedException e) {
-//                            logger.log(Level.SEVERE, "Session thread was interrupted", e);
-//                        }
-//                    }
-//                }
-//            };
-//            sessionKeepaliveThread.start();
-//            this.eventDispatcher = new SkypeEventDispatcher();
-//            loggedIn.set(true);
-//        } else {
-//            Elements elements = loginResponseDocument.select(".message_error");
-//            if (elements.size() > 0) {
-//                Element div = elements.get(0);
-//                if (div.children().size() > 1) {
-//                    Element span = div.child(1);
-//                    throw new InvalidCredentialsException(span.text());
-//                }
-//            }
-//            throw new InvalidCredentialsException("Could not find error message. Dumping entire page. \n" + loginResponseDocument.html());
-//        }
+        $skypetoken = $this->postToLogin($this->username, $this->password);
+        // 1
+        $this->getAsmToken($skypetoken);
+        // 2
+        $this->registerEndpoint($skypetoken);
+        // 3
+        $ping_ans=$this->ping();
+        echo 'PING:'.$ping_ans."\n\n";
     }
     private function buildRegistrationObject()  {
 //        JsonObject registrationObject = new JsonObject();
@@ -176,18 +165,44 @@ class skype4php
 //        subscriptionObject.add("interestedResources", interestedResources);
 //        return subscriptionObject;
     }
-    private function registerEndpoint()  {
-//        HttpsURLConnection connection = (HttpsURLConnection) new URL(ENDPOINTS_URL).openConnection(); // msmsgs@msnmsgr.com,Q1P7W2E4J9R8U3S5
-//            connection.setRequestProperty("Authentication", "skypetoken=" + skypeToken);
-//            //getReg.setRequestProperty("LockAndKey", "appId=msmsgs@msnmsgr.com; time=1436987361; lockAndKeyResponse=838e6231d460580332d22da83898ff44");
-//            connection.setRequestMethod("POST");
-//            connection.setDoOutput(true);
-//            connection.getOutputStream().write("{}".getBytes());
-//            connection.getInputStream();
-//            return connection;
+    private function registerEndpoint($skypeToken)  {
+        $h=array('Authentication:skypetoken='.$skypeToken);
+
+        $d=$this->page_curl(self::$ENDPOINTS_URL,array(),$h);
+
+
+        $headers=$d[0];
+
+        $SetRegistrationToken=$headers['Set-RegistrationToken'];
+
+
+        if (!$SetRegistrationToken)
+        {
+            throw new Exception('not $SetRegistrationToken');
+        }
+//        echo "Fetch: \$SetRegistrationToken\n";        echo "$SetRegistrationToken\n\n-----\n";
+
+        $SetRegistrationToken=explode(';',$SetRegistrationToken);
+
+        $tEndpointIds=explode('=',$SetRegistrationToken[1]);
+
+
+        //get : "Set-RegistrationToken"
+        $tRegistrationToken=null;
+
+        $this->skypeToken=$skypeToken;
+        $this->registrationToken=$SetRegistrationToken[0];
+        $this->endpointId=$tEndpointIds[1];
+
+
+
+        echo "{$this->skypeToken}\n{$this->registrationToken}\n{ $this->endpointId}\nDone\n";
+
+
     }
-    private function getAsmToken()  {
-        //    return Jsoup.connect(TOKEN_AUTH_URL).cookies(cookies).data("skypetoken", skypeToken).method(Method.POST).execute();
+    private function getAsmToken($skypeToken)  {
+        $d=$this->page_curl(self::$TOKEN_AUTH_URL,array('skypetoken'=>$skypeToken));
+        // @todo : check ans?
     }
     private function _postToLoginParseHtmlForm($html)
     {
@@ -212,11 +227,34 @@ class skype4php
         return $data;
     }
 
+    private function _postToLoginParseSkypetoken($html)  {
+
+//        input type="hidden" name="skypetoken" value="eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiIsImtpZCI6IjEifQ.eyJpYXQiOjE0Mzc0Mjg5NzIsImV4cCI6MTQzNzUxNTM3Miwic2t5cGVpZCI6ImlnMGlzdC5jb20iLCJzY3AiOjMxOCwiY3NpIjoiMCJ9.fT3sipfLx7VH6MlzMWXQ2X_eP4wlp0-edBRQok_wN3TG5kSWsn3v2EwhuMm801bLn-gjMl8dfVZkbGfgDmy3ANIegKUiWjPTWsS6Gdoo7oymgwHX8mCOOMq4RpjOv5ZPHny6sb-5VjNaij6Fq1Ny7nprCHfRfIg-FE-lp_6B2nlFrhoiZRVn0PwCPva1Sqe6BAl_5x2c8gX_nMwA"/> <input type="hidden" name="expires_in" value="86400"/> </form>
+        $pattern = '/<input type="hidden" name="skypetoken" value="([^"]*)"\\/>/';
+        preg_match($pattern,$html,$match);
+        if (!$match[1])
+        {
+            throw new Exception('Cant find skypetoken');
+        }
+        return $match[1];
+    }
+
+    /**
+     * result skypetoken
+     *
+     * @return mixed
+     * @throws Exception
+     */
     private function postToLogin()  {
 
 
         $result=$this->page_curl(self::$LOGIN_URL);
         $html=$result[1];
+
+        if (stripos($html,'skypetoken'))
+        {
+            return $this->_postToLoginParseSkypetoken($html);
+        }
 
         // parse html form
         $dataPost=$this->_postToLoginParseHtmlForm($html);
@@ -225,9 +263,14 @@ class skype4php
 
         $d=$this->page_curl(self::$LOGIN_URL,$dataPost);
         //??? <div class="messageIcon">Error</div><span>You have attempted to sign in with the wrong password too many times. Please try again later.
+        //??? <div class="messageIcon">Error</div><span>We need to double-check your details. Please review this page and submit it again.</span></div>
 
-
-print_r($d);
+        if (!stripos($d,'skypetoken'))
+        {
+            throw new Exception('Wrong answer on login , not skypetoken');
+        }
+        // skypetoken
+        return $this->_postToLoginParseSkypetoken($d);
 
 
     }
