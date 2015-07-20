@@ -7,9 +7,9 @@ include_once 'skype4php.php';
 
 //
 
-$skype=new skype4php($config['username'],$config['passwod']);
+$skype=new skype4php($config['username'],$config['password']);
 
-
+$skype->login();
 //
 
 
