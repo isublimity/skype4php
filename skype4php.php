@@ -6,20 +6,23 @@ class skype4php
     private static  $LOGIN_URL = "https://login.skype.com/login?client_id=578134&redirect_uri=https%3A%2F%2Fweb.skype.com";
     private static  $PING_URL = "https://web.skype.com/api/v1/session-ping";
     private static  $TOKEN_AUTH_URL = "https://api.asm.skype.com/v1/skypetokenauth";
-    private static  $SUBSCRIPTIONS_URL = "https://client-s.gateway.messenger.live.com/v1/users/ME/endpoints/SELF/subscriptions";
-    private static  $MESSAGINGSERVICE_URL = "https://client-s.gateway.messenger.live.com/v1/users/ME/endpoints/%s/presenceDocs/messagingService";
+    private static  $SUBSCRIPTIONS_URL = "https://%sclient-s.gateway.messenger.live.com/v1/users/ME/endpoints/SELF/subscriptions";
+    private static  $MESSAGINGSERVICE_URL = "https://%sclient-s.gateway.messenger.live.com/v1/users/ME/endpoints/%s/presenceDocs/messagingService";
     private static  $ENDPOINTS_URL = "https://client-s.gateway.messenger.live.com/v1/users/ME/endpoints";
-    private static  $LOGOUT_URL = "https://login.skype.com/logout?client_id=578134&redirect_uri=https%3A%2F%2Fweb.skype.com&intsrc=client-_-webapp-_-production-_-go-signin";
+//    private static  $LOGOUT_URL = "https://login.skype.com/logout?client_id=578134&redirect_uri=https%3A%2F%2Fweb.skype.com&intsrc=client-_-webapp-_-production-_-go-signin";
+    private static  $POLL_URL = "https://%sclient-s.gateway.messenger.live.com/v1/users/ME/endpoints/SELF/subscriptions/0/poll";
 
     private $registrationToken;
     private $username;
     private $password;
     private $endpointId;
+    private $path_cookies;
     private $skypeToken;
-    public function __construct($user,$password)
+    public function __construct($user,$password,$path_cookies)
     {
         $this->username=$user;
         $this->password=$password;
+        $this->path_cookies=$path_cookies;
     }
     private static function get_headers_from_curl_response($response)
     {
@@ -43,10 +46,14 @@ class skype4php
         return $headers;
     }
 
-
-    public static function page_curl($url,$fields_post=array(),$headers=array()) {
+    public function getCookieFile()
+    {
+        return rtrim($this->path_cookies,'/')."/cookie.txt";
+    }
+    private function page_curl($url,$fields_post=array(),$headers=array(),$custom_request='') {
         // Guzzle ?
 
+        //??? @todo rwt
 
         $m=microtime(true);
         //open connection
@@ -54,15 +61,30 @@ class skype4php
 
         //set the url, number of POST vars, POST data
         curl_setopt( $ch, CURLOPT_URL, $url);
-        curl_setopt( $ch, CURLOPT_POST, false);
 
+//        CURLOPT_CUSTOMREQUEST, 'PUT')
+        if ($custom_request)
+        {
+            curl_setopt( $ch, CURLOPT_CUSTOMREQUEST,'PUT');
+        }
+        else
+        {
+            curl_setopt( $ch, CURLOPT_POST, false);
+        }
         if ($fields_post)
         {
-            curl_setopt( $ch,CURLOPT_POST, 1);
-            curl_setopt( $ch,CURLOPT_POSTFIELDS, http_build_query($fields_post));
-            print_r($fields_post);
 
+            if (!$custom_request) curl_setopt( $ch,CURLOPT_POST, 1);
+            if (is_array($fields_post))
+            {
+                curl_setopt( $ch,CURLOPT_POSTFIELDS, http_build_query($fields_post));
+            }
+            else
+            {
+                curl_setopt( $ch,CURLOPT_POSTFIELDS,$fields_post);
+            }
         }
+
 
 
         curl_setopt( $ch, CURLOPT_RETURNTRANSFER, true);
@@ -82,8 +104,8 @@ class skype4php
         curl_setopt( $ch, CURLOPT_CONNECTTIMEOUT, 5 );
         curl_setopt( $ch, CURLOPT_TIMEOUT, 10 );
 
-        curl_setopt ($ch, CURLOPT_COOKIEFILE, "/tmp/cookie.txt"); // Сюда будем записывать cookies, файл в той же папке, что и сам скрипт
-        curl_setopt ($ch, CURLOPT_COOKIEJAR, "/tmp/cookie.txt");
+        curl_setopt ($ch, CURLOPT_COOKIEFILE,$this->getCookieFile());
+        curl_setopt ($ch, CURLOPT_COOKIEJAR,$this->getCookieFile());
 
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
 //        curl_setopt($ch, CURLOPT_VERBOSE, 1);
@@ -120,10 +142,11 @@ class skype4php
         ),
             array('X-Skypetoken:'.$this->skypeToken)
             );
-
-        return $d[0]['http_code'];
-
-
+        if (stripos($d[0]['http_code'],'200'))//??? @todo rwt
+        {
+            return true;
+        }
+        return false;
     }
     public function login()  {
 
@@ -133,43 +156,54 @@ class skype4php
         // 2
         $this->registerEndpoint($skypetoken);
         // 3
-        $ping_ans=$this->ping();
-        echo 'PING:'.$ping_ans."\n\n";
+        return $this->ping();
     }
-    private function buildRegistrationObject()  {
-//        JsonObject registrationObject = new JsonObject();
-//        registrationObject.add("id", "messagingService");
-//        registrationObject.add("type", "EndpointPresenceDoc");
-//        registrationObject.add("selfLink", "uri");
-//        JsonObject publicInfo = new JsonObject();
-//        publicInfo.add("capabilities", "video|audio");
-//        publicInfo.add("type", 1);
-//        publicInfo.add("skypeNameVersion", "skype.com");
-//        publicInfo.add("nodeInfo", "xx");
-//        publicInfo.add("version", "908/1.6.0.288//skype.com");
-//        JsonObject privateInfo = new JsonObject();
-//        privateInfo.add("epname", "Skype4J");
-//        registrationObject.add("publicInfo", publicInfo);
-//        registrationObject.add("privateInfo", privateInfo);
-//        return registrationObject;
+    private function buildRegistrationObject(){
+
+        $privateInfo=array();
+        $privateInfo['epname']='Skype4J';
+
+        $publicInfo=array();
+        $publicInfo['capabilities']="video|audio";
+        $publicInfo['type']=1;
+        $publicInfo['skypeNameVersion']="skype.com";
+        $publicInfo['nodeInfo']="xx";
+        $publicInfo['version']="908/1.6.0.288//skype.com";
+
+
+
+        $registrationObject=array();
+        $registrationObject['id']='messagingService';
+        $registrationObject['type']='EndpointPresenceDoc';
+        $registrationObject['selfLink']='uri';
+        $registrationObject['publicInfo']=$publicInfo;
+        $registrationObject['privateInfo']=$privateInfo;
+
+
+print_r($registrationObject);
+        echo json_encode($registrationObject)."\n";
+        return $registrationObject;
     }
-    private function buildSubscriptionObject()  {
-//        JsonObject subscriptionObject = new JsonObject();
-//        subscriptionObject.add("channelType", "httpLongPoll");
-//        subscriptionObject.add("template", "raw");
-//        JsonArray interestedResources = new JsonArray();
-//        interestedResources.add("/v1/users/ME/conversations/ALL/properties");
-//        interestedResources.add("/v1/users/ME/conversations/ALL/messages");
-//        interestedResources.add("/v1/users/ME/contacts/ALL");
-//        interestedResources.add("/v1/threads/ALL");
-//        subscriptionObject.add("interestedResources", interestedResources);
-//        return subscriptionObject;
-    }
+
     private function registerEndpoint($skypeToken)  {
         $h=array('Authentication:skypetoken='.$skypeToken);
 
-        $d=$this->page_curl(self::$ENDPOINTS_URL,array(),$h);
+        $d=$this->page_curl(self::$ENDPOINTS_URL,'{}',$h);
 
+        if ($d[2]['http_code']!==201)
+        {
+            throw new Exception('Cant registerEndpoint');
+        }
+
+
+
+//        int code = connection.getResponseCode();
+//            if (code >= 301 && code <= 303 || code == 307) { //User is in a different cloud - let's go there
+//                builder.setUrl(connection.getHeaderField("Location"));
+//                updateCloud(connection.getHeaderField("Location"));
+//                connection = builder.build();
+//                code = connection.getResponseCode();
+//            }
 
         $headers=$d[0];
 
@@ -180,25 +214,22 @@ class skype4php
         {
             throw new Exception('not $SetRegistrationToken');
         }
-//        echo "Fetch: \$SetRegistrationToken\n";        echo "$SetRegistrationToken\n\n-----\n";
 
-        $SetRegistrationToken=explode(';',$SetRegistrationToken);
 
-        $tEndpointIds=explode('=',$SetRegistrationToken[1]);
+        $splits=explode(';',$SetRegistrationToken);
+
+
+        $tEndpointIds=explode('=',$splits[2]);
 
 
         //get : "Set-RegistrationToken"
         $tRegistrationToken=null;
 
         $this->skypeToken=$skypeToken;
-        $this->registrationToken=$SetRegistrationToken[0];
+        $this->registrationToken=$splits[0];
         $this->endpointId=$tEndpointIds[1];
 
-
-
-        echo "{$this->skypeToken}\n{$this->registrationToken}\n{ $this->endpointId}\nDone\n";
-
-
+//        echo "skypeToken:{$this->skypeToken}\nregistrationToken:{$this->registrationToken}\nEndpoint:{$this->endpointId}\nDone\n";
     }
     private function getAsmToken($skypeToken)  {
         $d=$this->page_curl(self::$TOKEN_AUTH_URL,array('skypetoken'=>$skypeToken));
@@ -238,6 +269,26 @@ class skype4php
         }
         return $match[1];
     }
+    private function getCloud()
+    {
+        return "bn1-";
+    }
+    private function withCloud($url,$array=false)
+    {
+        $a[0]=$this->getCloud();
+        if (is_array($array) && sizeof($array)) $a=array_merge_recursive($a,$array);
+        return vsprintf($url,$a);
+
+    }
+private function updateCloud( $anyLocation) {
+//Pattern grabber = Pattern.compile("https?://([^-]*-)client-s");
+//Matcher m = grabber.matcher(anyLocation);
+//if (m.find()) {
+//this.cloud = m.group(1);
+//} else {
+//    throw new IllegalArgumentException("Could not find match in " + anyLocation);
+//}
+}
 
     /**
      * result skypetoken
@@ -262,15 +313,16 @@ class skype4php
         print_r($dataPost);
 
         $d=$this->page_curl(self::$LOGIN_URL,$dataPost);
+        $html=$d[1];
         //??? <div class="messageIcon">Error</div><span>You have attempted to sign in with the wrong password too many times. Please try again later.
         //??? <div class="messageIcon">Error</div><span>We need to double-check your details. Please review this page and submit it again.</span></div>
 
-        if (!stripos($d,'skypetoken'))
+        if (!stripos($html,'skypetoken'))
         {
             throw new Exception('Wrong answer on login , not skypetoken');
         }
         // skypetoken
-        return $this->_postToLoginParseSkypetoken($d);
+        return $this->_postToLoginParseSkypetoken($html);
 
 
     }
@@ -288,44 +340,99 @@ class skype4php
     //loggedIn.set(false);
     }
 
-    public function getChat()
+    public function getChats()
+    {
+        $this->subscribe();
+    }
+    private function subscribe()
+    {
+        //if $this->_subc = true ; return true;
+       $head=array("Content-Type:application/json",
+            "RegistrationToken:".$this->getRegistrationToken()
+            );
+
+
+        $SubscriptionObject=array();
+        $SubscriptionObject['channelType']='httpLongPoll';
+        $SubscriptionObject['template']='raw';
+        $SubscriptionObject['interestedResources']=array(
+            "/v1/users/ME/conversations/ALL/properties",
+            "/v1/users/ME/conversations/ALL/messages",
+            "/v1/users/ME/contacts/ALL",
+            "/v1/threads/ALL"
+        );
+        $result=$this->page_curl($this->withCloud(self::$SUBSCRIPTIONS_URL),json_encode($SubscriptionObject),$head);
+        print_r($result);
+
+        if ($result[2]['http_code']!==201)
+        {
+            throw new Exception('subscribe to SUBSCRIPTIONS_URL false');
+        }
+        //
+        $url_message=$this->withCloud(self::$MESSAGINGSERVICE_URL,array(urlencode($this->endpointId)));
+
+
+
+        $regObj=$this->buildRegistrationObject();
+
+
+        $result=$this->page_curl($url_message,json_encode($regObj),$head,'PUT');
+
+
+        if ($result[2]['http_code']!==200)
+        {
+            throw new Exception('false subscribe , $MESSAGINGSERVICE_URL = $url_message');
+        }
+
+        $result=json_decode($result[1],true);
+
+        echo "{$result['selfLink']}\n";
+        if ($result['selfLink'])
+    }
+    public function _bs_cribe()
     {
 
-    }
-    public function subscribe()
-    {
-        //HttpsURLConnection subscribe = (HttpsURLConnection) new URL(SUBSCRIPTIONS_URL).openConnection();
-//        subscribe.setRequestMethod("POST");
-//        subscribe.setDoOutput(true);
-//        subscribe.setRequestProperty("RegistrationToken", registrationToken);
-//        subscribe.setRequestProperty("Content-Type", "application/json");
-//        subscribe.getOutputStream().write(buildSubscriptionObject().toString().getBytes());
-//        subscribe.getInputStream();
-//        HttpsURLConnection registerEndpoint = (HttpsURLConnection) new URL(String.format(MESSAGINGSERVICE_URL, URLEncoder.encode(endpointId, "UTF-8"))).openConnection();
-//        registerEndpoint.setRequestMethod("PUT");
-//        registerEndpoint.setDoOutput(true);
-//        registerEndpoint.setRequestProperty("RegistrationToken", registrationToken);
-//        registerEndpoint.setRequestProperty("Content-Type", "application/json");
-//        registerEndpoint.getOutputStream().write(buildRegistrationObject().toString().getBytes());
-//        registerEndpoint.getInputStream();
+//        builder.setUrl(withCloud(MESSAGINGSERVICE_URL, URLEncoder.encode(endpointId, "UTF-8")));
+//        builder.setMethod("PUT", true);
+//        builder.setData(buildRegistrationObject().toString());
+//        connection = builder.build();
 //
-//        Thread pollThread = new Thread() {
+//        code = connection.getResponseCode();
+//        if (code != 200) {
+//            throw generateException(connection);
+//        }
+//        pollThread = new Thread(String.format("Skype-%s-PollThread", username)) {
 //        public void run() {
-//                try {
-//                    URL url = new URL("https://client-s.gateway.messenger.live.com/v1/users/ME/endpoints/SELF/subscriptions/0/poll");
-//                    HttpsURLConnection c = null;
-//                    while (loggedIn.get()) {
-//                        try {
-//                            c = (HttpsURLConnection) url.openConnection();
-//                            c.setRequestMethod("POST");
-//                            c.setDoOutput(true);
-//                            c.addRequestProperty("Content-Type", "application/json");
-//                            c.addRequestProperty("RegistrationToken", registrationToken);
-//                            c.getOutputStream().write(new byte[0]);
-//                            InputStream read = c.getInputStream();
-//                            String json = StreamUtils.readFully(read);
-//                            if (!json.isEmpty()) {
-//                                final JsonObject message = JsonObject.readFrom(json);
+//        ConnectionBuilder poll = new ConnectionBuilder();
+//                poll.setUrl(withCloud(POLL_URL));
+//                poll.setMethod("POST", true);
+//                poll.addHeader("RegistrationToken", registrationToken);
+//                poll.addHeader("Content-Type", "application/json");
+//                poll.setData("");
+//                main:
+//                while (loggedIn.get()) {
+//                    try {
+//                        HttpURLConnection c = poll.build();
+//                        AtomicInteger code = new AtomicInteger(0);
+//                        while (code.get() == 0) {
+//                            try {
+//                                code.set(c.getResponseCode());
+//                            } catch (SocketTimeoutException e) {
+//                                if (Thread.currentThread().isInterrupted()) {
+//                                    break main;
+//                                }
+//                            }
+//                        }
+//
+//                        if (code.get() != 200) {
+//                            throw generateException(c);
+//                        }
+//
+//                        InputStream read = c.getInputStream();
+//                        String json = StreamUtils.readFully(read);
+//                        if (!json.isEmpty()) {
+//                            final JsonObject message = JsonObject.readFrom(json);
+//                            if (!scheduler.isShutdown()) {
 //                                scheduler.execute(new Runnable() {
 //                                    public void run() {
 //                                        try {
@@ -363,14 +470,12 @@ class skype4php
 //                                    }
 //                                });
 //                            }
-//                        } catch (IOException e) {
-//                            eventDispatcher.callEvent(new DisconnectedEvent(e));
-//                            loggedIn.set(false);
 //                        }
+//                    } catch (IOException e) {
+//                        eventDispatcher.callEvent(new DisconnectedEvent(e));
+//                        loggedIn.set(false);
 //                    }
-//                } catch (IOException e) {
-//            e.printStackTrace();
-//        }
+//                }
 //            }
 //        };
 //        pollThread.start();
