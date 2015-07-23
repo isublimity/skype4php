@@ -10,7 +10,10 @@ class skype4php
     private static  $MESSAGINGSERVICE_URL = "https://%sclient-s.gateway.messenger.live.com/v1/users/ME/endpoints/%s/presenceDocs/messagingService";
     private static  $ENDPOINTS_URL = "https://client-s.gateway.messenger.live.com/v1/users/ME/endpoints";
 //    private static  $LOGOUT_URL = "https://login.skype.com/logout?client_id=578134&redirect_uri=https%3A%2F%2Fweb.skype.com&intsrc=client-_-webapp-_-production-_-go-signin";
-    private static  $POLL_URL = "https://%sclient-s.gateway.messenger.live.com/v1/users/ME/endpoints/SELF/subscriptions/0/poll";
+    const POLL_URL = "https://%sclient-s.gateway.messenger.live.com/v1/users/ME/endpoints/SELF/subscriptions/0/poll";
+    const CHAT_INFO_URL = "https://%sclient-s.gateway.messenger.live.com/v1/threads/%s/?view=msnp24Equivalent";
+    const SEND_MESSAGE_URL = "https://%sclient-s.gateway.messenger.live.com/v1/users/ME/conversations/%s/messages";
+
 
     private $registrationToken;
     private $username;
@@ -74,14 +77,25 @@ class skype4php
         if ($fields_post)
         {
 
-            if (!$custom_request) curl_setopt( $ch,CURLOPT_POST, 1);
+            if (!$custom_request)
+            {
+                curl_setopt( $ch,CURLOPT_POST, 1);
+            }
             if (is_array($fields_post))
             {
                 curl_setopt( $ch,CURLOPT_POSTFIELDS, http_build_query($fields_post));
             }
             else
             {
-                curl_setopt( $ch,CURLOPT_POSTFIELDS,$fields_post);
+                if (strtolower($fields_post)=='post')
+                {
+                    curl_setopt( $ch,CURLOPT_POSTFIELDS,"");
+                }
+                else
+                {
+                    curl_setopt( $ch,CURLOPT_POSTFIELDS,$fields_post);
+                }
+
             }
         }
 
@@ -180,8 +194,6 @@ class skype4php
         $registrationObject['privateInfo']=$privateInfo;
 
 
-print_r($registrationObject);
-        echo json_encode($registrationObject)."\n";
         return $registrationObject;
     }
 
@@ -342,33 +354,62 @@ private function updateCloud( $anyLocation) {
 
     public function getChats()
     {
-        $this->subscribe();
+        if (!sizeof($this->chats))
+        {
+            $this->initChats();
+            if (!$this->chats) throw new Exception('cant load chats');
+
+        }
+        return $this->chats;
+    }
+
+    private $chats=array();
+    private function initChats()
+    {
+        $head=array("Content-Type:application/json", "RegistrationToken:".$this->getRegistrationToken() );
+
+        $irl='https://client-s.gateway.messenger.live.com/v1/users/ME/conversations?startTime='.time().'&pageSize=200&view=msnp24Equivalent&targetType=Passport|Skype|Lync|Thread';
+        $result=$this->page_curl($this->withCloud($irl),false,$head);
+
+        echo "--Initi chats------\n";
+
+        $data=json_decode($result[1],true);
+        if (!isset($data['conversations'])) throw new Exception('cant init chats');
+
+        foreach ($data['conversations'] as $row)
+        {
+            if ($row['type']=='Conversation')
+            {
+                echo "find chat:".$row['id']."\n";
+                $this->chats[$row['id']]=true;
+            }
+
+        }
+
+
     }
     private function subscribe()
     {
-        //if $this->_subc = true ; return true;
-       $head=array("Content-Type:application/json",
-            "RegistrationToken:".$this->getRegistrationToken()
-            );
-
 
         $SubscriptionObject=array();
         $SubscriptionObject['channelType']='httpLongPoll';
         $SubscriptionObject['template']='raw';
         $SubscriptionObject['interestedResources']=array(
-            "/v1/users/ME/conversations/ALL/properties",
-            "/v1/users/ME/conversations/ALL/messages",
-            "/v1/users/ME/contacts/ALL",
-            "/v1/threads/ALL"
+            "/v1/threads/ALL",
+//           "/v1/users/ME/conversations/ALL/properties",
+           "/v1/users/ME/conversations/ALL/messages",
+           "/v1/users/ME/contacts/ALL"
+
         );
         $result=$this->page_curl($this->withCloud(self::$SUBSCRIPTIONS_URL),json_encode($SubscriptionObject),$head);
-        print_r($result);
 
         if ($result[2]['http_code']!==201)
         {
             throw new Exception('subscribe to SUBSCRIPTIONS_URL false');
         }
-        //
+
+
+
         $url_message=$this->withCloud(self::$MESSAGINGSERVICE_URL,array(urlencode($this->endpointId)));
 
 
@@ -381,13 +422,57 @@ private function updateCloud( $anyLocation) {
 
         if ($result[2]['http_code']!==200)
         {
+            print_r($result);
             throw new Exception('false subscribe , $MESSAGINGSERVICE_URL = $url_message');
         }
 
-        $result=json_decode($result[1],true);
+//        $result=json_decode($result[1],true);
+        print_r($result);
+        for ($f=0;$f<10;$f++)
+        {
+            $this->poolThread();
+        }
 
-        echo "{$result['selfLink']}\n";
-        if ($result['selfLink'])
+    }
+    private function poolThread()
+    {
+        $url=$this->withCloud(self::POLL_URL);
+        $head=array("Content-Type:application/json", "RegistrationToken:".$this->getRegistrationToken() );
+
+
+        echo "$url\n";
+        $result=$this->page_curl($url,'post',$head);
+
+        $data=(json_decode($result[1],true));
+
+        if (isset($data['eventMessages']))
+        {
+            echo "Recive\n";
+
+            foreach ($data['eventMessages'] as $obj)
+            {
+                echo $obj['type']."\t".$obj['time']."\n";
+                print_r($obj['resource']);
+            }
+        }
+        else
+        {
+            echo "Skip!\n";
+            print_r($data);
+        }
+
+        sleep(10);
+    }
+
+    private function getChatIdentity()
+    {
+
+    }
+    private function loadChats()
+    {
+//        $head=array("Content-Type:application/json",  "RegistrationToken:".$this->getRegistrationToken() );
+//        $url_message=$this->withCloud(self::CHAT_INFO_URL,array(urlencode($this->endpointId)));
+//        $result=$this->page_curl($url_message,json_encode($regObj),$head,'PUT');
     }
     public function _bs_cribe()
     {
@@ -479,5 +564,47 @@ private function updateCloud( $anyLocation) {
 //            }
 //        };
 //        pollThread.start();
+    }
+
+    public function sendMessage($chat_id,$message_text)
+    {
+        echo "sendMessage($chat_id,$message_text)\n\n";
+        $ms=microtime(true);
+        $url=$this->withCloud(self::POLL_URL);
+        $head=array("Content-Type:application/json", "RegistrationToken:".$this->getRegistrationToken() );
+
+        $obj=array();
+        $obj['content']=$message_text;
+        $obj['contenttype']='text';
+        $obj['messagetype']='RichText';
+        $obj['clientmessageid']=$ms;
+
+        $url=$this->withCloud(self::SEND_MESSAGE_URL,array(urlencode($chat_id)));
+
+        $r=$this->page_curl($url,json_encode($obj),$head);
+        if ($r[2]['http_code']!==201)
+        {
+            throw new Exception('Cant Send');
+        }
+
+        return true;
+    }
+    public function createChat()
+    {
+//        Validate.notNull(client, "Client must not be null");
+//        Validate.isTrue(client instanceof SkypeImpl, String.format("Now is not the time to use that, %s", client.getUsername()));
+//        Validate.notEmpty(identity, "Identity must not be null/empty");
+//        if (identity.startsWith("19:")) {
+//            if (identity.endsWith("@thread.skype")) {
+//                return new ChatGroup((SkypeImpl) client, identity);
+//            } else {
+//                client.getLogger().info(String.format("Skipping P2P chat with identity %s", identity));
+//                return null;
+//            }
+//        } else if (identity.startsWith("8:")) {
+//            return new ChatIndividual((SkypeImpl) client, identity);
+//        } else {
+//            throw new IllegalArgumentException(String.format("Unknown group type with identity %s", identity));
+//        }
     }
 }
